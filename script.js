@@ -60,6 +60,7 @@ function normalize(c) {
         valid:      cast - blank - abst,        // suffrages exprimés
         doubleVote: !!c.double_vote,
         needApproval: !!c.need_approval,
+        closed: !!c.closed,                     // élection clôturée (verrouillée)
         round:  c.round || 1,
         seats:  c.seats || 2,
         rounds: c.rounds || [],
@@ -446,7 +447,7 @@ function signature(c, hasVoted) {
     const withVotes = view === "live";
 
     return JSON.stringify([
-        c.phase, c.round, c.rounds.length, hasVoted, myAccess.status,
+        c.phase, c.closed, c.round, c.rounds.length, hasVoted, myAccess.status,
         withVotes ? [c.cast, c.blank, c.abst, access.map(a => [a.voter_id, a.status, a.pseudo])] : 0,
         c.pairs.map(x => [x.id, x.t, x.r, x.prog, x.seat, withVotes ? x.votes : 0])
     ]);
@@ -492,11 +493,12 @@ function classCardHTML(c) {
 
     /* Sélecteur de phase : la phase courante est mise en avant */
     const seg = Object.keys(PHASES)
-        .map(p => `<button type="button" aria-pressed="${c.phase === p}" onclick="phase('${k}','${p}')">${PHASES[p]}</button>`)
+        .map(p => `<button type="button" aria-pressed="${c.phase === p}" ${c.closed ? "disabled" : ""} onclick="phase('${k}','${p}')">${PHASES[p]}</button>`)
         .join("");
 
     const tags = `
         <span class="tag">${PHASES[c.phase]}</span>
+        ${c.closed ? `<span class="tag">🔒 Clôturée</span>` : ""}
         ${c.doubleVote ? `<span class="tag">2 binômes</span>` : ""}
         ${c.needApproval ? `<span class="tag">Validation des élèves</span>` : ""}`;
 
@@ -524,7 +526,7 @@ function classCardHTML(c) {
 
             <div class="card-actions">
                 <button class="go" onclick="showLive('${k}')">Suivre en direct</button>
-                <button onclick="openDossier('${k}')">Dossier PDF</button>
+                <button onclick="openDossier('${k}')">${c.closed ? "Dossier" : "Dossier PDF"}</button>
                 <button class="danger spacer" onclick="del('${k}')">Supprimer</button>
             </div>
 
@@ -1002,7 +1004,7 @@ function viewLive(m) {
     return `
         <h1>En direct · ${esc(c.name)}</h1>
         <p class="muted">
-            <span class="tag">${PHASES[c.phase]}</span>
+            <span class="tag">${PHASES[c.phase]}</span>${c.closed ? ` <span class="tag">🔒 Clôturée</span>` : ""}
             Tour ${c.round} · élection ${seatLabel(c)} sur ${c.seats} ·
             ${c.pairs.length} binôme(s) · mise à jour automatique
         </p>
@@ -1030,8 +1032,8 @@ function viewLive(m) {
 
         <div class="card-actions">
             ${closeButton}
-            <button onclick="phase('${c.code}','vote','live')">Ouvrir le vote</button>
-            <button onclick="phase('${c.code}','res','live')">Publier les résultats</button>
+            ${c.closed ? "" : `<button onclick="phase('${c.code}','vote','live')">Ouvrir le vote</button>
+            <button onclick="phase('${c.code}','res','live')">Publier les résultats</button>`}
         </div>
 
         <nav class="nav-row" aria-label="Navigation">
@@ -1235,6 +1237,12 @@ async function newClass() {
 }
 
 async function phase(k, p, next = "dash") {
+    const target = myClasses.find(x => x.code === k) || (cls && cls.code === k ? cls : null);
+
+    if (target && target.closed) {
+        return go(next, "Cette élection est clôturée : elle ne peut plus être modifiée.");
+    }
+
     try {
         await api.setPhase(k, p);
         go(next);
@@ -1575,7 +1583,7 @@ async function poll() {
 /* Tableau de bord du professeur : même principe que poll() */
 function dashSig(list) {
     return JSON.stringify(list.map(c =>
-        [c.code, c.phase, c.round, c.cast, c.blank, c.abst, c.pairs.length, c.rounds.length]));
+        [c.code, c.phase, c.closed, c.round, c.cast, c.blank, c.abst, c.pairs.length, c.rounds.length]));
 }
 
 async function pollDash() {
@@ -1717,16 +1725,16 @@ Object.assign(api, {
         return row ? row.data : null;
     },
 
-    /* Clôture : supprime définitivement actes et procès-verbal de la classe */
-         async purgeDossier(code) {
-             check(await sb.rpc("purge_dossier", { p_class: code }));
-         },
+    /* Clôture : verrouille l'élection ET supprime définitivement actes et procès-verbal
+       (fonction close_election, voir SQL.sql). */
+    async closeElection(code) {
+        check(await sb.rpc("close_election", { p_class: code }));
 
-        /* Un refus RLS ne renvoie aucune erreur : on vérifie qu'il ne reste rien */
-        const left = await api.acts(code);
+        /* Un refus ne renvoie pas toujours d'erreur : on vérifie que la clôture est bien effective */
+        const fresh = await api.getClass(code);
 
-        if (left.length) {
-            throw new Error("Suppression impossible : exécute migration_v6.sql dans Supabase.");
+        if (!fresh || !fresh.closed) {
+            throw new Error("Clôture impossible : exécute à nouveau SQL.sql (ou migration_cloture.sql) dans Supabase.");
         }
     },
 
@@ -2066,6 +2074,23 @@ function readMinutes() {
 
 function viewDossier(m) {
     const c  = C();
+
+    /* Élection clôturée : actes et procès-verbal ont été supprimés, plus rien à éditer */
+    if (c.closed) {
+        return `
+            <h1>Dossier · ${esc(c.name)}</h1>
+            ${m}
+            <div class="box">
+                <h2>🔒 Élection clôturée</h2>
+                <p class="muted">Cette élection est verrouillée : les actes de candidature et le procès-verbal ont été supprimés
+                   et plus aucune modification n'est possible. Les résultats restent consultables.</p>
+                <div class="row">
+                    <button onclick="go('res')">Voir les résultats</button>
+                </div>
+            </div>
+            <button class="link" onclick="go('dash')">← Tableau de bord</button>`;
+    }
+
     const pm = minutes || defaultMinutes(c);
 
     pvRows = pm.rows.length;
@@ -2164,11 +2189,12 @@ function viewDossier(m) {
 
         <div class="box">
             <h2>Clôturer l'élection</h2>
-            <p class="muted">Supprime définitivement les actes de candidature et le procès-verbal enregistrés.
+            <p class="muted">Verrouille l'élection (plus aucune modification possible) et supprime définitivement
+               les actes de candidature et le procès-verbal enregistrés.
                Télécharge-les d'abord : après la clôture, ils ne sont plus récupérables.</p>
             ${c.phase === "res" ? "" : `<p class="notice">Publie d'abord les résultats pour pouvoir clôturer.</p>`}
             <div class="row">
-                <button class="danger" onclick="closeElection()" ${c.phase === "res" ? "" : "disabled"}>Clôturer et supprimer les données</button>
+                <button class="danger" onclick="closeElection()" ${c.phase === "res" ? "" : "disabled"}>Clôturer l'élection et supprimer les données</button>
             </div>
         </div>
 
@@ -2201,19 +2227,24 @@ async function saveMinutes(quiet) {
 }
 
 async function closeElection() {
+    if (C().closed) {
+        return note("Cette élection est déjà clôturée.");
+    }
+
     if (C().phase !== "res") {
         return note("Publie d'abord les résultats.");
     }
 
-    if (!confirm("Clôturer l'élection ? Les actes de candidature et le procès-verbal seront supprimés définitivement. Les as-tu téléchargés ?")) {
+    if (!confirm("Clôturer l'élection ? Elle sera verrouillée et les actes de candidature ainsi que le procès-verbal seront supprimés définitivement. Les as-tu téléchargés ?")) {
         return;
     }
 
     try {
-        await api.purgeDossier(cur);
+        await api.closeElection(cur);
         minutes = null;
-        await go("dossier");
-        note("Élection clôturée : les données ont été supprimées.", true);
+        acts    = [];
+        await go("dash");
+        note("Élection clôturée : elle est verrouillée et les données ont été supprimées.", true);
     } catch (e) {
         note(explain(e));
     }
