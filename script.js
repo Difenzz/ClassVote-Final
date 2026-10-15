@@ -4,8 +4,8 @@
 
 /* À remplacer par les valeurs de ton projet :
    Supabase → Project Settings → API (clé "anon" / "publishable" uniquement) */
-const SUPABASE_URL = "https://prudjnubmpgposogjowa.supabase.co";
-const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBydWRqbnVibXBncG9zb2dqb3dhIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc5MjA5MjE1MSwiZXhwIjoyMTA3NjY4MTUxfQ.9qHv0MPwFgvhaEFsaUOkgp0-Nc55WdsaDWjMJ8WqkBI";
+const SUPABASE_URL = "https://tejwsflrwnjpvrelosco.supabase.co";
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRlandzZmxyd25qcHZyZWxvc2NvIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc5MjA4MzQ0MSwiZXhwIjoyMTA3NjU5NDQxfQ.8bCoEhszTZa9yjgR4DG6116Y82a8MdmRxJNevECfDEY";
 
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
@@ -2165,7 +2165,7 @@ function viewDossier(m) {
                Télécharge-les d'abord : après la clôture, ils ne sont plus récupérables.</p>
             ${c.phase === "res" ? "" : `<p class="notice">Publie d'abord les résultats pour pouvoir clôturer.</p>`}
             <div class="row">
-                <button class="danger" onclick="closeElection()" ${c.phase === "res" ? "" : "disabled"}>Clôturer et supprimer les données</button>
+                <button class="danger" onclick="closeElection()" ${c.phase === "res" ? "" : "disabled"}>Supprimer les données</button>
             </div>
         </div>
 
