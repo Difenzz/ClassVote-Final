@@ -1,12 +1,10 @@
 -- ============================================================
 -- ClassVote — schéma public COMPLET, prêt à coller dans le SQL Editor de Supabase
 --
--- Nouveauté : clôture réelle de l'élection
---   * colonne classes.closed (élection verrouillée)
---   * fonction close_election() : verrouille l'élection ET supprime
---     actes de candidature + procès-verbal (+ efface les pseudos restants)
---   * purge_dossier() : suppression seule des actes + procès-verbal (sans clôturer)
---   * une élection clôturée ne peut plus être modifiée (phase, procès-verbal)
+-- Clôture de l'élection :
+--   * close_election() : supprime l'élection ET toutes ses données
+--     (binômes, actes de candidature, procès-verbal, accès élèves, bulletins)
+--   * purge_dossier()  : supprime seulement actes + procès-verbal
 --
 -- ATTENTION : la section RESET supprime les tables du projet ET leurs données.
 -- Pour mettre à jour une base DÉJÀ remplie sans rien perdre, utilise
@@ -52,7 +50,6 @@ CREATE TABLE public.classes (
     blank_votes integer DEFAULT 0 NOT NULL,
     abstentions integer DEFAULT 0 NOT NULL,
     need_approval boolean DEFAULT false NOT NULL,
-    closed boolean DEFAULT false NOT NULL,
     CONSTRAINT classes_code_check CHECK ((code ~ '^[0-9]{6}$'::text)),
     CONSTRAINT classes_n_check CHECK ((n >= 1)),
     CONSTRAINT classes_name_check CHECK (((char_length(name) >= 1) AND (char_length(name) <= 40))),
@@ -257,20 +254,13 @@ begin
     if c.owner is distinct from auth.uid() or not public.is_teacher() then
         raise exception 'Action non autorisée.' using errcode = '42501';
     end if;
-    if c.closed then
-        raise exception 'Cette élection est déjà clôturée.';
-    end if;
     if c.phase <> 'res' then
         raise exception 'Publie d''abord les résultats avant de clôturer.';
     end if;
 
-    -- Suppression définitive des données sensibles
-    delete from candidacy_forms where class_code = c.code;
-    delete from minutes         where class_code = c.code;
-    update voter_access set pseudo = null where class_code = c.code;
-
-    -- Verrouillage de l'élection
-    update classes set closed = true where code = c.code;
+    -- Supprime l'élection : binômes, actes, procès-verbal, accès élèves et
+    -- bulletins partent avec elle (ON DELETE CASCADE).
+    delete from classes where code = c.code;
 end;
 $$;
 
@@ -531,13 +521,13 @@ CREATE POLICY classes_insert ON public.classes FOR INSERT WITH CHECK (((owner = 
 
 CREATE POLICY classes_read ON public.classes FOR SELECT USING (true);
 
-CREATE POLICY classes_update ON public.classes FOR UPDATE USING (((owner = auth.uid()) AND public.is_teacher() AND (NOT closed))) WITH CHECK (((owner = auth.uid()) AND public.is_teacher()));
+CREATE POLICY classes_update ON public.classes FOR UPDATE USING (((owner = auth.uid()) AND public.is_teacher())) WITH CHECK (((owner = auth.uid()) AND public.is_teacher()));
 
 CREATE POLICY minutes_owner ON public.minutes TO authenticated USING ((EXISTS ( SELECT 1
    FROM public.classes c
-  WHERE ((c.code = minutes.class_code) AND (c.owner = auth.uid()) AND (NOT c.closed))))) WITH CHECK ((EXISTS ( SELECT 1
+  WHERE ((c.code = minutes.class_code) AND (c.owner = auth.uid()))))) WITH CHECK ((EXISTS ( SELECT 1
    FROM public.classes c
-  WHERE ((c.code = minutes.class_code) AND (c.owner = auth.uid()) AND (NOT c.closed)))));
+  WHERE ((c.code = minutes.class_code) AND (c.owner = auth.uid())))));
 
 CREATE POLICY pairs_delete ON public.pairs FOR DELETE USING (((owner = auth.uid()) AND (EXISTS ( SELECT 1
    FROM public.classes c
