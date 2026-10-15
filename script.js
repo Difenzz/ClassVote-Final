@@ -185,9 +185,12 @@ const api = {
         check(await sb.rpc("decide_access", { p_class: code, p_voter: voterId, p_approve: approve }));
     },
 
-    async deleteClass(code) {
-        check(await sb.from("classes").delete().eq("code", code));
-    },
+      async deleteClass(code) {
+          const rows = check(await sb.from("classes").delete().eq("code", code).select("code"));
+          if (!rows.length) {
+              throw new Error("Suppression refusée : connecte-toi avec ton compte professeur.");
+          }
+      },
 
 
     /* --- Binômes -------------------------------------------------------- */
@@ -1715,9 +1718,9 @@ Object.assign(api, {
     },
 
     /* Clôture : supprime définitivement actes et procès-verbal de la classe */
-    async purgeDossier(code) {
-        check(await sb.from("candidacy_forms").delete().eq("class_code", code));
-        check(await sb.from("minutes").delete().eq("class_code", code));
+         async purgeDossier(code) {
+             check(await sb.rpc("purge_dossier", { p_class: code }));
+         },
 
         /* Un refus RLS ne renvoie aucune erreur : on vérifie qu'il ne reste rien */
         const left = await api.acts(code);
