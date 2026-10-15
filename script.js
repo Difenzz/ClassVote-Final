@@ -4,8 +4,8 @@
 
 /* À remplacer par les valeurs de ton projet :
    Supabase → Project Settings → API (clé "anon" / "publishable" uniquement) */
-const SUPABASE_URL = "https://fzobmlpdqwslsyksbnkm.supabase.co";
-const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ6b2JtbHBkcXdzbHN5a3NibmttIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc5MjA5MDMwMiwiZXhwIjoyMTA3NjY2MzAyfQ.A4IuT460HM_fs7sa5-GI7ShuovmTBVU5_SPmhj6isZY";
+const SUPABASE_URL = "https://tejwsflrwnjpvrelosco.supabase.co";
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRlandzZmxyd25qcHZyZWxvc2NvIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc5MjA4MzQ0MSwiZXhwIjoyMTA3NjU5NDQxfQ.8bCoEhszTZa9yjgR4DG6116Y82a8MdmRxJNevECfDEY";
 
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
@@ -185,12 +185,9 @@ const api = {
         check(await sb.rpc("decide_access", { p_class: code, p_voter: voterId, p_approve: approve }));
     },
 
-      async deleteClass(code) {
-          const rows = check(await sb.from("classes").delete().eq("code", code).select("code"));
-          if (!rows.length) {
-              throw new Error("Suppression refusée : connecte-toi avec ton compte professeur.");
-          }
-      },
+    async deleteClass(code) {
+        check(await sb.from("classes").delete().eq("code", code));
+    },
 
 
     /* --- Binômes -------------------------------------------------------- */
@@ -1717,16 +1714,16 @@ Object.assign(api, {
         return row ? row.data : null;
     },
 
-    /* Clôture : supprime l'élection ET toutes ses données (binômes, actes, procès-verbal,
-       accès élèves, votes…) — fonction close_election, voir SQL.sql */
-    async closeElection(code) {
-        check(await sb.rpc("close_election", { p_class: code }));
+    /* Clôture : supprime définitivement actes et procès-verbal de la classe */
+    async purgeDossier(code) {
+        check(await sb.from("candidacy_forms").delete().eq("class_code", code));
+        check(await sb.from("minutes").delete().eq("class_code", code));
 
-        /* On vérifie que l'élection a réellement disparu */
-        const still = await api.getClass(code);
+        /* Un refus RLS ne renvoie aucune erreur : on vérifie qu'il ne reste rien */
+        const left = await api.acts(code);
 
-        if (still) {
-            throw new Error("Clôture impossible : exécute SQL.sql (ou migration_cloture.sql) dans Supabase.");
+        if (left.length) {
+            throw new Error("Suppression impossible : exécute migration_v6.sql dans Supabase.");
         }
     },
 
@@ -2164,11 +2161,11 @@ function viewDossier(m) {
 
         <div class="box">
             <h2>Clôturer l'élection</h2>
-            <p class="muted">Supprime définitivement l'élection et toutes ses données : binômes, actes de candidature
-               et procès-verbal. Télécharge-les d'abord : après la clôture, ils ne sont plus récupérables.</p>
+            <p class="muted">Supprime définitivement les actes de candidature et le procès-verbal enregistrés.
+               Télécharge-les d'abord : après la clôture, ils ne sont plus récupérables.</p>
             ${c.phase === "res" ? "" : `<p class="notice">Publie d'abord les résultats pour pouvoir clôturer.</p>`}
             <div class="row">
-                <button class="danger" onclick="closeElection()" ${c.phase === "res" ? "" : "disabled"}>Clôturer et supprimer l'élection</button>
+                <button class="danger" onclick="closeElection()" ${c.phase === "res" ? "" : "disabled"}>Clôturer et supprimer les données</button>
             </div>
         </div>
 
@@ -2205,20 +2202,15 @@ async function closeElection() {
         return note("Publie d'abord les résultats.");
     }
 
-    if (!confirm("Clôturer l'élection ? L'élection et TOUTES ses données (binômes, actes de candidature, procès-verbal) seront supprimées définitivement. Les as-tu téléchargés ?")) {
+    if (!confirm("Clôturer l'élection ? Les actes de candidature et le procès-verbal seront supprimés définitivement. Les as-tu téléchargés ?")) {
         return;
     }
 
     try {
-        await api.closeElection(cur);
-
+        await api.purgeDossier(cur);
         minutes = null;
-        acts    = [];
-        cls     = null;
-        cur     = null;
-
-        await go("dash");
-        note("Élection clôturée : l'élection et ses données ont été supprimées.", true);
+        await go("dossier");
+        note("Élection clôturée : les données ont été supprimées.", true);
     } catch (e) {
         note(explain(e));
     }
